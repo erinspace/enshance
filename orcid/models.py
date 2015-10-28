@@ -20,6 +20,12 @@ class GatheredContributor(models.Model):
     docID = models.TextField()
     provider_updated_date_time = models.CharField(max_length=100, null=True)
 
+    # ORCID Name fields for comparison
+    orcid_given_name = models.TextField(null=True)
+    orcid_family_name = models.TextField(null=True)
+    orcid_additional_name = models.TextField(null=True)
+    orcid_name = models.TextField(null=True)
+
 
 class Response(models.Model):
     key = models.TextField(primary_key=True)
