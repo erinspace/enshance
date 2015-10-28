@@ -3,6 +3,7 @@ from __future__ import unicode_literals
 
 import os
 import furl
+import json
 import logging
 
 from celery import Celery
@@ -23,10 +24,13 @@ logger.setLevel(logging.INFO)
 
 
 def get(d, key, default=None):
-    try:
-        return d[key]
-    except KeyError:
-        return default
+    if d:
+        try:
+            return d[key]
+        except KeyError:
+            return default
+    else:
+        return None
 
 
 def debug(func):
@@ -69,6 +73,37 @@ def query_orcid_one_email(db_id, email):
 
         if db_id % 1000 == 0:
             logger.info('Last queried person id: {}'.format(db_id))
+
+
+@app.task
+def pull_names_from_raw_orcid():
+    has_orcid_info = GatheredContributor.objects.filter(raw_orcid__isnull=False)
+
+    count = 0
+    for person in has_orcid_info:
+        save_one_person.delay(person)
+
+        count += 1
+
+        if count % 100 == 0:
+            logger.info('Processed {} contributors.'.format(count))
+
+
+@app.task
+def save_one_person(person):
+    details = person.raw_orcid[0]['orcid-profile']['orcid-bio']['personal-details']
+
+    orcid_given = details.get('given-names')
+    orcid_family = details.get('family-name')
+    orcid_addional = details.get('other-names')
+    orcid_credit = details.get('credit-name')
+
+    person.orcid_given_name = get(orcid_given, 'value')
+    person.orcid_family_name = get(orcid_family, 'value')
+    person.orcid_additional_name = get(orcid_addional, 'value')
+    person.orcid_name = get(orcid_credit, 'value')
+
+    person.save()
 
 
 @app.task(rate_limit=1)
