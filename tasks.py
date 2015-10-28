@@ -1,7 +1,7 @@
 import os
 from invoke import task
 
-from enshance.tasks import gather_contributors, gather_email_orcid, gather_email_from_orcid
+from enshance.tasks import gather_contributors, gather_email_orcid, gather_email_from_orcid, pull_names_from_raw_orcid
 
 
 @task
@@ -21,6 +21,13 @@ def get_email_from_orcid(start=None, async=False):
 @task
 def get_contributors(start=None):
     gather_contributors(start)
+
+
+@task
+def get_orcid_contributors(async=False):
+    from enshance import settings
+    settings.CELERY_ALWAYS_EAGER = not async
+    pull_names_from_raw_orcid().delay()
 
 
 @task
