@@ -2,6 +2,7 @@
 from __future__ import unicode_literals
 
 import os
+import furl
 import logging
 
 from celery import Celery
@@ -36,20 +37,28 @@ def debug(func):
     return inner
 
 
-def start_email_orcid():
-    all_people = GatheredContributor.objects.all()
+@app.task(rate_limit=1)
+def gather_email_orcid(start):
+    all_people = GatheredContributor.objects.order_by('id').exclude(id_email__isnull=True).exclude(id_email__exact='').iterator()
+    if start:
+        all_people = all_people.filter(id__gte=start).iterator()
+    for count, person in enumerate(all_people):
+        if person.id_email:
+            query_orcid_one_email.delay(person.id, person.id_email)
 
-    for person in all_people:
-        if person.email:
-            query_orcid_one_email(person.id, person.email).delay()
-        if person.id_orcid:
-            query_orcid_one_id(person.id, person.id_orcid)
+
+@app.task(rate_limit=1)
+def gather_email_from_orcid(start):
+    all_people = GatheredContributor.objects.order_by('id').filter(id_orcid__isnull=False)
+    if start:
+        all_people = all_people.filter(id__gte=start).iterator()
+    for count, person in enumerate(all_people):
+        query_orcid_one_id.delay(person.id, person.id_orcid)
 
 
 @app.task(rate_limit=1)
 def query_orcid_one_email(db_id, email):
     email_search_url = ORCID_BASE_URL + 'email:{}'.format(email)
-
     orcid_data = requests.get(email_search_url, headers={'Accept': 'application/orcid+json'}).json()
     if orcid_data['orcid-search-results']['num-found'] == 1:
         contributor = GatheredContributor.objects.get(id=db_id)
@@ -58,26 +67,36 @@ def query_orcid_one_email(db_id, email):
         contributor.raw_orcid = orcid_data['orcid-search-results']['orcid-search-result']
         contributor.save()
 
+        if db_id % 1000 == 0:
+            logger.info('Last queried person id: {}'.format(db_id))
+
 
 @app.task(rate_limit=1)
 def query_orcid_one_id(db_id, orcid):
-    orcid_search_url = ORCID_BASE_URL + 'orcid:{}'.format(orcid)
+    orcid_number = furl.furl(orcid).pathstr[1:]
+    orcid_search_url = ORCID_BASE_URL + 'orcid:{}'.format(orcid_number)
 
     orcid_data = requests.get(orcid_search_url, headers={'Accept': 'application/orcid+json'}).json()
     if orcid_data['orcid-search-results']['num-found'] == 1:
         contributor = GatheredContributor.objects.get(id=db_id)
 
-        all_emails = orcid_data['orcid-search-results']['orcid-search-result'][0]['orcid-profile']['orcid-bio']['contact-details']['email']
         email = None
-        for email in all_emails:
-            if email['current']:
-                email = email['value']
-        contributor.email = email
+        contact_details = orcid_data['orcid-search-results']['orcid-search-result'][0]['orcid-profile']['orcid-bio'].get('contact-details')
+        if contact_details:
+            email_list = contact_details['email']
+            for email in email_list:
+                if email['current']:
+                    email = email['value']
+
+        contributor.id_email = email
+        contributor.raw_orcid = orcid_data['orcid-search-results']['orcid-search-result']
         contributor.save()
+
+    if db_id % 1000 == 0:
+        logger.info('Last queried person id: {}'.format(db_id))
 
 
 @app.task
-@debug
 def gather_contributors(start=None):
     client = ShareSearch().sort('providerUpdatedDateTime')
     if start:
