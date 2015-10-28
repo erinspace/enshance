@@ -46,7 +46,7 @@ def record_or_load_response(method, url, throttle=None, force=False, params=None
     response = requests.request(method, url, **kwargs)
 
     if not response.ok:
-        logger.info('Got non-ok response code.', url=url, method=method)
+        logger.info('Got non-ok response code. url: {}, mehtod: {}'.format(url, method))
 
     if isinstance(response.content, six.text_type):
         response.content = response.content.encode('utf8')
